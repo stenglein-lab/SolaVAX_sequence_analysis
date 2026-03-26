@@ -1,0 +1,498 @@
+---
+author: "Mark Stenglein"
+date: "4/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary of sequencing of SolaVAX SARS-CoV-2 RNA 
+
+#### Mark Stenglein, 4.8.2020
+#### Performed library prep, sequencing, and helped with analysis: Shaun Cross and Marylee Kapuscinski. 
+
+**What?**  Dick Bowen handed off samples in Trizol-LS from pre- and post- SolaVAX-treated SARS-CoV-2 preparations.  We extracted RNA and performed shotgun RNA sequencing on these samples to address a couple questions:
+
+1.	Is there RNA damage/mutation detectable by sequencing from SolaVAX-treatment, and if so, what type of damage is evident?  
+2.	Confirmation of the the SARS-CoV-2 sequence
+
+### Methods Summary 
+
+#### Library prep
+
+We performed RNA extraction using a standard Trizol extraction protocol coupled with column-based purification and on-column DNase treatment.  Because it is possible that the enzymes used in library preparation could impact detection of lesions we used two different library preparation methods.  (For instance, different reverse transcriptase enzymes might differently be able to replicate over damaged templates).  First, we made double-stranded cDNA from the RNA using Superscript III RT and Klenow DNA polymerase.  We used this dsDNA as input to a Kapa Biosystems DNA HyperPrep library prep.  Second, we used the RNA directly as input to a Kapa RNA HyperPrep library prep.  These two methods differ mainly in how dsDNA is synthesized.  The Kapa RNA HyperPrep kit doesn’t specify which enzymes they use for cDNA synthesis.  
+
+#### Sequencing 
+
+We did 1x150 sequencing on an Illumina NextSeq instrument generating ~150M reads.  
+
+#### Analysis summary
+
+We removed low quality bases from reads and adapter sequences, then aligned reads to an existing reference SARS-CoV-2 genome.  We used this mapping to generate a new consensus sequence for the “CSU” SARS-CoV-2.  We then remapped reads to this new consensus sequence and tabulated mismatched bases with high quality scores.   The frequencies of the different types of mutations are plotted on the following pages.
+
+#### Analysis details
+
+Marylee pre-processed the datasets on the cctsi-103.cvmbs.colostate.edu server in the directory `~mllayton/datasets/2020_03_29_covid/`
+
+Preprocessing consisted of the following steps:
+
+- cutadapt to remove adapter sequences and low quality bases (basecall Q < 30)
+- cd-hit-dup to remove duplicate reads
+- filtering of [human reads](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.26/) from dataset (as a proxy for any cellular reads)
+
+Preprocessing was done using the [run_preprocessing_pipeline_single_end](./run_preprocessing_pipeline_single_end) and the [filter_human_reads_single_end](./filter_human_reads_single_end) scripts.   These were run using the [simple_scheduler helper script](https://github.com/stenglein-lab/stenglein_lab_scripts/blob/master/simple_scheduler), e.g.:
+
+```
+simple_scheduler ./run_preprocessing_pipeline_single_end `cat ids.txt`
+simple_scheduler ./filter_human_reads_single_end `cat ids.txt`
+```
+
+[simple_scheduler](https://github.com/stenglein-lab/stenglein_lab_scripts/blob/master/simple_scheduler) is a script that will run a command repeatedly on a number of input files.
+
+[ids.txt](./ids.txt) simply contaims the names of the datasets:
+```
+mdstengl@cctsi-103:~/analyses/2020_4_Solavax$ cat ids.txt 
+D_post
+D_pre
+R_post
+R_pre
+```
+
+D and R refer to the library prep method (see above).  _pre and _post refer to pre and post photoinactivation.
+
+
+The output of these steps was filtered fastq files with adapter sequences, low quality bases, and cellular reads removed.  These had .fuh.fastq suffixes.
+
+I copied these filtered fastq files and the fasta SARS-CoV-2 reference sequence to the directory `/home/mdstengl/analyses/2020_4_Solavax` (this also on the cctsi-103 server).  
+
+We then mapped these filtered reads to the SARS-CoV-2 genome (the [consensus sequence](./CSU_SARS_coV_2_ref_genome.fasta) of the "CSU" virus in question). 
+
+To do this, first [create](https://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#the-bowtie2-build-indexer) a bowtie2 index:
+```
+bowtie2-build CSU_SARS_coV_2_ref_genome.fasta CSU_SARS_coV_2_ref_genome
+```
+
+Then use simple_scheduler to run the [bt_sars_end_to_end helper script](./bt_sars_end_to_end), which maps reads to this index in [end-to-end mapping mode](https://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#end-to-end-alignment-versus-local-alignment).
+
+```
+simple_scheduler ./bt_sars_end_to_end `cat ids.txt`
+```
+
+This is what that mapping helper script looks like:
+
+```
+mdstengl@cctsi-103:~/analyses/SARS_CoV_2/2020_4_Solavax$ cat bt_sars_end_to_end 
+#!/usr/bin/env bash
+
+# This is a helper script to run bowtie2 to map single-end read files to an index
+#
+# usage ./run_bt <r1_fastq> <bt_index>
+#
+# Mark Stenglein 2015
+
+id=$1
+f1=${id}_R1_fuh.fastq
+
+# f1=$1
+bt_index=$2
+
+bt_index=CSU_SARS_coV_2_ref_genome
+
+index_name=${bt_index##/*/}
+output_prefix=${f1}.bt_ee_${index_name}
+
+log_f=${output_prefix}.bt_log
+
+# setup bowtie command
+cmd="bowtie2 
+ -x $bt_index
+ -q
+ -U $f1 
+ --no-unal
+ --threads 16
+ -S ${output_prefix}.sam"
+
+# run bowtie command and save it to log file
+echo $cmd
+echo $0 $* > $log_f
+echo $cmd >> $log_f
+$cmd 2>> $log_f
+```
+
+The output of this was .sam files containing information about reads mapped to the SARS-CoV-2 genome.  From these, we needed to tabulate mismatches in mapped reads. To do this, I wrote a perl script to tabulate the frequencies of particular mismatch types:  [tabulate_mismatches_from_sam](./tabulate_mismatches_from_sam)
+
+I ran this script on the datasets using [this helper script](./run_tabulate_ee): 
+```
+mdstengl@cctsi-103:~/analyses/SARS_CoV_2/2020_4_Solavax$ cat run_tabulate_ee
+#!/bin/bash
+
+id=$1
+
+min_q=30
+
+./tabulate_mismatches_from_sam -q $min_q -f CSU_SARS_coV_2_ref_genome.fasta ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam > ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam.mismatch_tab.txt
+```
+
+Run via [simple_scheduler](https://github.com/stenglein-lab/stenglein_lab_scripts/blob/master/simple_scheduler):
+```
+simple_scheduler ./run_tabulate_ee `cat ids.txt` 
+```
+
+This produced 4 output files with the counts of particular mismatch types and the total counts for particular bases, e.g.:
+```
+# look at a few random lines from one of these tabulation files
+mdstengl@cctsi-103:~/analyses/SARS_CoV_2/2020_4_Solavax$ tail -n 5000 R_post_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam.mismatch_tab.txt | head
+28619	G	A	39	T	G
+28619	G	C	22	T	G
+28619	G	G	22372	T	G
+28619	G	T	51	T	G
+28620	G	A	31	G	G
+28620	G	C	15	G	G
+28620	G	G	22113	G	G
+28620	G	T	28	G	G
+28621	G	A	39	G	C
+28621	G	C	14	G	C
+```
+
+These are almost in good-enough tidy format to import and analyze in R.  Want to mush them all together into a single file with the dataset id as a column too.  So run this command:
+```
+mdstengl@cctsi-103:~/analyses/2020_4_Solavax$ simple_scheduler -s ./prepend_dataset_name_ee `cat ids.txt` >> mismatch_counts_ee.txt
+```
+
+[prepend_dataset_names_ee](./prepend_dataset_names_ee) is really just an awk command to add a column to files:
+```
+mdstengl@cctsi-103:~/analyses/SARS_CoV_2/2020_4_Solavax$ cat prepend_dataset_name_ee
+#!/bin/bash
+
+id=$1
+
+awk -v i=$id '{ print i "\t" $0; }' ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam.mismatch_tab.txt 
+```
+
+So the main output of all of this is mismatch_counts_ee.txt, which contains information about mismatches (or matches) counts at every position of the genome in all datasets.
+
+OK, now the data is in a good enough form for interpretation.  Import into R and analyze:
+```{r warning=FALSE, message=FALSE}
+
+library(tidyverse)
+
+# read in the file with the mismatch data for all datasets
+df_pos <- read.delim("mismatch_counts_ee.txt", header=F, sep="\t")
+
+# observations is the number of times the indicated read_base was observerved
+colnames(df_pos) <- c("dataset","position", "ref_base", "read_base", "mismatch_count", "last_base", "next_base")
+
+# acceptable bases (ignore Ns, etc)
+acceptable_bases <- c("A", "C", "G", "T")
+
+# only keep mismatches with reference and read base in A,C,G,T
+df_pos <- df_pos %>% filter(ref_base %in% acceptable_bases & read_base %in% acceptable_bases) 
+# make a new dataset that summarizes particular types of mismatches (or non mismatches)
+# across all positions 
+df <- df_pos %>% group_by(dataset, ref_base, read_base) %>% summarize(mismatch_count = sum(mismatch_count))
+ungroup(df)
+
+# add a column: total_count, which is the # of times each base was observed in all the reads
+# this will reflect G-C/A-T content of genome
+# df <- df %>% group_by(dataset, read_base) %>% mutate(total_count = sum(mismatch_count))
+df <- df %>% group_by(dataset, ref_base) %>% mutate(total_count = sum(mismatch_count))
+ungroup(df)
+
+# parse info out of dataset IDs from dataset name
+df <- df %>% mutate(solavax = if_else(str_detect(dataset, "post"), TRUE, FALSE),
+                    Treatment = if_else(str_detect(dataset, "pre"), 
+                                        "Pre-inactivation", "Photoinactivated"),
+                    
+                    libprep = if_else(str_detect(dataset, "D_"), 
+                                      "Lib prep method #1 (Kapa DNA HyperPrep)", 
+                                      "Lib prep method #2 (Kapa RNA HyperPrep)"))
+
+# remove non-mutations (e.g. A->A)
+df <- df %>% filter(ref_base != read_base)
+
+# normalize mismatch frequencies to the total number of observations of that base in reads
+df <- df %>% mutate(mismatch_freq = mismatch_count / total_count)
+
+# make a composite name for the type of mutation (e.g. "G->A")
+df <- df %>% mutate(mismatch = str_c(ref_base, "->", read_base))
+
+# what is the range?
+min_freq <- min(df$mismatch_freq)
+max_freq <- max(df$mismatch_freq)
+mean_freq <- mean(df$mismatch_freq)
+median_freq <- median(df$mismatch_freq)
+
+# normalize post/pre frequencies.
+# first, make a new dataframe with slightly wider format, where the pre- and post- datasets are paired up
+df_wide <- df %>% pivot_wider(id_cols = c(libprep, mismatch), names_from = solavax, values_from = mismatch_freq, names_prefix = "solavax_")
+
+# calculate ratio of frequency for each mutation type in post:pre datasets
+df_wide <- df_wide %>% mutate(post_pre = solavax_TRUE/solavax_FALSE)
+
+# store some specific ratio and frequency values
+gt_ratio <- df_wide %>% filter(mismatch == "G->T" & libprep == "Lib prep method #2 (Kapa RNA HyperPrep)") %>% pull(post_pre) 
+gc_ratio <- df_wide %>% filter(mismatch == "G->C" & libprep == "Lib prep method #2 (Kapa RNA HyperPrep)") %>% pull(post_pre) 
+
+gt_freq  <- df_wide %>% filter(mismatch == "G->T" & libprep == "Lib prep method #2 (Kapa RNA HyperPrep)") %>% pull(solavax_TRUE) 
+gc_freq  <- df_wide %>% filter(mismatch == "G->C" & libprep == "Lib prep method #2 (Kapa RNA HyperPrep)") %>% pull(solavax_TRUE) 
+
+
+# plot raw mismatch frequencies 
+fig2_p <- ggplot(df) + 
+  geom_col(aes(x=mismatch, y=mismatch_freq, fill=solavax), color="black", size=0.2, position="dodge") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5)) +
+  facet_wrap(~libprep) +
+  scale_fill_manual(values=c("steelblue", "orange")) +
+  xlab("Mismatch type") +
+  ylab("Frequency of indicated mutation") 
+
+# display fig
+fig2_p
+```
+
+
+```{r}
+# plot normalized post/pre mismatch frequencies
+fig1_p <- ggplot(df_wide) + 
+  geom_col(aes(x=mismatch, y=post_pre), position="dodge", fill="slategray3", color="black", size=0.2) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5)) +
+  facet_wrap(~libprep) +
+  xlab("Mismatch type") +
+  ylab("Mutation frequency in post-SolaVAX / frequeny in pre-SolaVAX sample") 
+
+# display fig
+fig1_p
+```
+
+
+### Results/Interpretation  
+
+**Top line result: There was data consistent with oxidative damaged G bases in datasets from the Kapa RNA HyperPrep but this was not apparent in the Kapa DNA HyperPrep datasets (Fig. 1).**
+
+The frequency of G->T changes in post-SolaVAX treated RNA was `r paste0(sprintf("%.1f", gt_ratio))`x  higher than in pre-SolaVAX treated RNA and this ratio was `r paste0(sprintf("%0.1f", gc_ratio))`x for G->C changes (for the Kapa RNA HyperPrep data; **Fig. 1**).  These are the types of lesions you would expect to see from guanine oxidation products following reverse transcription.  Note also that these are not the actual changes that happen to the RNA but they are the apparent mutations in the cDNA sequences following reverse transcription. 
+
+The frequency of these mutations was `r paste0(sprintf("%0.4f", gt_freq))` (G->T) and `r paste0(sprintf("%0.4f", gc_freq))` (G->C) in the post-SolaVAX RNA (**Fig. 2**), meaning that in a SARS-CoV-2 genome that has ~5,862 G bases, you would expect to see `r paste0(sprintf("%0.0f", floor((gc_freq+gt_freq)*5862)))` damaged Gs in a single RNA molecule.  
+
+**There are a couple of relevant technical issues here:**
+
+1. The frequency of damaged bases is around the inherent error rate of the enzymes used in library prep and the sequencing itself, so using a more sensitive specialized sequencing method for the detection of damaged bases could improve signal to noise ratio.  This is what I proposed in the grant that just went in and this is a method I would propose trying: https://www.pnas.org/content/114/35/9415.  If we were to go that route, it would be good to include additional controls, such as in vitro damaged synthetic RNA (for instance RNA treated with hydrogen peroxide).  
+
+2. The difference between the two library prep methods could be attributed to the different RT enzymes used, which may be able to replicate over damaged bases with different efficiencies.  Additional work would be required to nail this down. 
+
+
+```{r echo=FALSE}
+# display fig 1
+fig1_p
+```
+
+**Figure 1. G->T and G->C mutations are elevated in SolaVAX-treated RNA.**  The frequencies of the indicated types of mutations in SARS-CoV-2 derived reads were tabulated in pre- and post-SolaVAX datasets.  The ratio of the frequencies in the post-SolaVAX to the pre-SolaVAX samples are plotted for the indicated mutation types.  The Kapa DNA and RNA HyperPrep library preparation methods differ in how dsDNA is synthesized.  
+
+
+
+
+```{r echo=FALSE}
+# display fig 2
+fig2_p
+```
+
+
+**Figure 2. Mutation frequencies vary by library preparation method and mutation type.**  The frequencies of the indicated types of mutations in SARS-CoV-2 derived reads were plotted.  The Kapa DNA and RNA HyperPrep library preparation methods differ in how dsDNA is synthesized.  
+
+### How many damaged bases would you expect per genome
+
+Use a Poisson distribution to model the number of expected mutated Gs per genome based on the average # of damaged Gs per genome using the above frequencies.
+
+```{r}
+
+combined_freq <- gc_freq + gt_freq
+
+# empirical: count from Geneious
+g_per_genome = 5863
+
+average_damaged_g_per_genome <- combined_freq * g_per_genome
+
+mutations_per_genome <- seq(0, 30)
+
+p_mutations_per_genome <- dpois(x=mutations_per_genome, lambda=average_damaged_g_per_genome)
+
+dist_df <- data.frame(cbind(mutations_per_genome, p_mutations_per_genome))
+colnames(dist_df) <- c("mut_per_genome", "p_mut")
+
+panelC <- ggplot(dist_df) + geom_point(aes(x=mut_per_genome, y=p_mut)) +
+             geom_line(aes(x=mut_per_genome, y=p_mut)) +
+  xlab("Damaged G bases per genome") + 
+  # ylab("Probability of that many \n damaged G bases per genome") +
+  ylab("Probability") +
+  theme_bw(base_size = 8)
+
+panelC
+```
+
+```{r}
+# the probability that there would be 0 mutations per genome
+p_mutations_per_genome[1]
+```
+
+
+### Make a figure for the SolaVax hamster infection paper
+
+Date: 8/30/2020
+
+```{r}
+# plot raw mismatch frequencies 
+panelA <- ggplot(filter(df, str_detect(libprep, "Kapa RNA"))) + 
+  geom_col(aes(x=mismatch, y=mismatch_freq, fill=Treatment), color="black", size=0.2, position="dodge") + 
+  theme_bw(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5)) +
+  scale_fill_manual(values=c("steelblue", "orange")) +
+  xlab("Mismatch type") +
+  ylab("Mismatch frequency") 
+
+panelA
+
+# Make a plot just of the Kapa results
+panelB <- ggplot(filter(df_wide, str_detect(libprep, "Kapa RNA"))) + 
+  geom_col(aes(x=mismatch, y=post_pre), position="dodge", fill="slategray4", color="black", size=0.5) + 
+  theme_bw(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5)) +
+  xlab("Mismatch type") +
+  # ylab("Freq. in photoinactivated  / \n freq. in untreated") 
+  ylab("Freq. in photoinactivated  / \n freq. in untreated") 
+
+panelB
+
+# this library provides ggarrange
+library(egg)
+
+supp_fig_x <- ggarrange(panelA, panelB, panelC, ncol=1)
+
+# save it
+ggsave("Supp_Figure_X_damaged_RNA.pdf", supp_fig_x, width=6, height=9, units="in")
+
+# display it
+supp_fig_x
+
+```
+
+### Position-specific mismatch rate?
+
+Goal: Assess mismatch frequencies at individual positions in the genome, and plot averages across all positions.
+
+```{r}
+df_pos <- df_pos %>% group_by(dataset, position) %>% mutate(coverage = sum(mismatch_count))
+ungroup(df_pos)
+ggplot(df_pos) + geom_histogram(aes(x=coverage))
+```
+
+```{r}
+# only keep positions with coverage > 1000
+df_pos <- df_pos %>% filter(coverage > 1000)
+
+# calculate per position mismatch frequencies
+df_pos <- df_pos %>% mutate(mismatch_frequency = (mismatch_count / coverage)) %>% filter(ref_base != read_base) 
+
+df_pos <- df_pos %>% mutate(solavax = if_else(str_detect(dataset, "post"), TRUE, FALSE),
+                            Treatment = if_else(str_detect(dataset, "post"), 
+                                                "Inactivated", "Pre-inactivation"), 
+                            libprep = if_else(str_detect(dataset, "D_"), 
+                                              "Lib prep method #1 (Kapa DNA HyperPrep)", 
+                                              "Lib prep method #2 (Kapa RNA HyperPrep)"))
+# 
+# make a composite name for the type of mutation (e.g. "G->A")
+df_pos <- df_pos %>% mutate(mismatch = str_c(ref_base, "->", read_base))
+
+# normalize post/pre frequencies.
+# first, make a new dataframe with slightly wider format, where the pre- and post- datasets are paired up
+# df_pos_wide <- df_pos %>% pivot_wider(id_cols = c(position, libprep, mismatch), names_from = solavax, values_from = mismatch_frequency, names_prefix = "solavax_")
+
+df_pos_wide <- df_pos %>% pivot_wider(id_cols=c(position, libprep, mismatch), names_from = solavax, values_from = mismatch_frequency, names_prefix = "solavax_")
+
+# calculate ratio of frequency for each mutation type in post:pre datasets
+df_pos_wide <- df_pos_wide %>% mutate(post_pre = solavax_TRUE/solavax_FALSE) %>% filter(!is.na(post_pre))
+
+ggplot (filter(df_pos_wide, str_detect(libprep, "RNA"))) +
+  geom_jitter(aes(x=mismatch, y=post_pre), width=0.2)
+```
+
+```{r}
+# plot raw mismatch frequencies 
+panelA_pos <- ggplot(filter(df_pos, str_detect(libprep, "Kapa RNA"))) + 
+  geom_boxplot(aes(x=mismatch, y=mismatch_frequency, fill=Treatment), color="black", size=0.2, width=0.8, outlier.shape = NA) + 
+  theme_bw(base_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5),
+        legend.position = "none") +
+  scale_fill_manual(values=c("steelblue", "orange")) +
+  ylim(0,0.005) +
+  xlab("Mismatch type") +
+  ylab("Mismatch frequency") 
+
+panelA_pos
+```
+
+```{r}
+# Plot RNA hyper prep data
+df_temp <- filter(df_pos_wide, str_detect(libprep, "RNA"))
+
+# what are the actual stats?
+df_temp <- df_temp %>% group_by(libprep, mismatch) %>% 
+  mutate(median_post_pre = median(post_pre, na.rm=T),
+         mean_post_pre = mean(post_pre, na.rm=T),
+         stdev_post_pre = sd(post_pre, na.rm=T) )
+ungroup(df_temp)
+
+# plot
+panelB_pos <- ggplot(df_temp) + 
+  geom_boxplot(aes(x=mismatch, y=post_pre), fill="slategray4", color="black", size=0.5, width=0.8, outlier.shape = NA) + 
+  theme_bw(base_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust=0.5)) +
+  coord_cartesian(y = c(0,5)) +
+  xlab("Mismatch type") +
+  ylab("Freq. in photoinactivated  / untreated") 
+
+panelB_pos
+
+```
+
+
+Combine panels of main figure for texct
+```{r}
+fig_x <- ggarrange(panelA_pos, panelB_pos, panelC, ncol=3)
+
+# save it
+ggsave("Figure_X_damaged_RNA.pdf", fig_x, width=7.5, height=3, units="in")
+
+# display it
+fig_x
+```
+
+
+```{r}
+# calculate means and medians across sites
+df_average_across_sites <- df_pos_wide %>% group_by(libprep, mismatch) %>% 
+  summarize(mean_post_pre = mean(post_pre, na.rm = T), 
+            median_post_pre = median(post_pre, na.rm = T),
+            stdev_post_pre = sd(post_pre, na.rm = T),
+            stderr_post_pre = sd(post_pre, na.rm = T) / n())
+
+ggplot(filter(df_average_across_sites, str_detect(libprep, "RNA")),
+       aes(x=mismatch, y=median_post_pre)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin=median_post_pre - stdev_post_pre, 
+                    ymax=median_post_pre + stdev_post_pre))
+
+```
+
+```{r}
+ggplot(filter(df_average_across_sites, str_detect(libprep, "RNA")),
+       aes(x=mismatch, y=mean_post_pre)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin=mean_post_pre - stderr_post_pre, 
+                    ymax=mean_post_pre + stderr_post_pre))
+
+```
+
+**Interpretation:**  There is a lot of stochastic variability at some positions: this may be due to PCR effects. For instance, if a PCR-caused mutation in a library molecule ocurred during an early cycle of PCR during library amplification, it might rise to an inappropriately high frequency as a fraction of total reads. **Use of UMIs would get around this. **   Also, this is why averaging across sites produces a much cleaner signal: it gets rid of these differences.  We also may want to consider medians and not means for this reason.
