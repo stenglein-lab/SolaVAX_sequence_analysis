@@ -1,0 +1,5 @@
+#!/bin/bash
+
+id=$1
+
+awk -v i=$id '{ print i "\t" $0; }' ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam.mismatch_tab.txt 

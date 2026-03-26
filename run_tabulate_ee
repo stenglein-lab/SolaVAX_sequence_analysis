@@ -1,0 +1,7 @@
+#!/bin/bash
+
+id=$1
+
+min_q=30
+
+./tabulate_mismatches_from_sam -q $min_q -f CSU_SARS_coV_2_ref_genome.fasta ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam > ${id}_R1_fuh.fastq.bt_ee_CSU_SARS_coV_2_ref_genome.sam.mismatch_tab.txt
