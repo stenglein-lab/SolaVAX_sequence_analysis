@@ -7,3 +7,5 @@ This repository contains files related to the sequence analysis performed in [th
 The analysis is documented in [this RMarkdown format report](./Solavax_mismatch_analysis.Rmd). This describes how we performed the analysis, and includes the R code used to analyze data and generate figures.  A rendered html output of this RMarkdown document is [provided](https://html-preview.github.io/?url=https://github.com/stenglein-lab/SolaVAX_sequence_analysis/blob/master/Solavax_mismatch_analysis.html)
 
 We've also included analysis scripts referenced in this document in this repository. 
+
+The main output of all of this is [this figure](./Figure_X_damaged_RNA.pdf), which is output from [the .Rmd script](./Solavax_mismatch_analysis.Rmd) and constitutes Fig 1B->1D in the paper.

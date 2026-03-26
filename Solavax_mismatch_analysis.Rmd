@@ -161,7 +161,7 @@ These are almost in good-enough tidy format to import and analyze in R.  Want to
 mdstengl@cctsi-103:~/analyses/2020_4_Solavax$ simple_scheduler -s ./prepend_dataset_name_ee `cat ids.txt` >> mismatch_counts_ee.txt
 ```
 
-[prepend_dataset_names_ee](./prepend_dataset_names_ee) is really just an awk command to add a column to files:
+[prepend_dataset_name_ee](./prepend_dataset_name_ee) is really just an awk command to add a column to files:
 ```
 mdstengl@cctsi-103:~/analyses/SARS_CoV_2/2020_4_Solavax$ cat prepend_dataset_name_ee
 #!/bin/bash
@@ -458,7 +458,7 @@ panelB_pos
 ```
 
 
-Combine panels of main figure for texct
+Combine panels of main figure for text
 ```{r}
 fig_x <- ggarrange(panelA_pos, panelB_pos, panelC, ncol=3)
 
@@ -469,30 +469,3 @@ ggsave("Figure_X_damaged_RNA.pdf", fig_x, width=7.5, height=3, units="in")
 fig_x
 ```
 
-
-```{r}
-# calculate means and medians across sites
-df_average_across_sites <- df_pos_wide %>% group_by(libprep, mismatch) %>% 
-  summarize(mean_post_pre = mean(post_pre, na.rm = T), 
-            median_post_pre = median(post_pre, na.rm = T),
-            stdev_post_pre = sd(post_pre, na.rm = T),
-            stderr_post_pre = sd(post_pre, na.rm = T) / n())
-
-ggplot(filter(df_average_across_sites, str_detect(libprep, "RNA")),
-       aes(x=mismatch, y=median_post_pre)) +
-  geom_col() + 
-  geom_errorbar(aes(ymin=median_post_pre - stdev_post_pre, 
-                    ymax=median_post_pre + stdev_post_pre))
-
-```
-
-```{r}
-ggplot(filter(df_average_across_sites, str_detect(libprep, "RNA")),
-       aes(x=mismatch, y=mean_post_pre)) +
-  geom_col() + 
-  geom_errorbar(aes(ymin=mean_post_pre - stderr_post_pre, 
-                    ymax=mean_post_pre + stderr_post_pre))
-
-```
-
-**Interpretation:**  There is a lot of stochastic variability at some positions: this may be due to PCR effects. For instance, if a PCR-caused mutation in a library molecule ocurred during an early cycle of PCR during library amplification, it might rise to an inappropriately high frequency as a fraction of total reads. **Use of UMIs would get around this. **   Also, this is why averaging across sites produces a much cleaner signal: it gets rid of these differences.  We also may want to consider medians and not means for this reason.
